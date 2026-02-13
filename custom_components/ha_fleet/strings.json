@@ -1,0 +1,24 @@
+{
+  "title": "HA Fleet Agent",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up HA Fleet Agent",
+        "description": "Configure the HA Fleet monitoring agent.",
+        "data": {
+          "cloud_url": "Fleet Cloud URL",
+          "api_key": "API Key",
+          "instance_name": "Instance Name"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Fleet Cloud",
+      "invalid_auth": "Invalid API key",
+      "unknown": "Unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "This instance is already configured"
+    }
+  }
+}
