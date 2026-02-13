@@ -1,0 +1,14 @@
+get_logs:
+  name: Get Home Assistant Logs
+  description: Retrieve recent Home Assistant log entries
+  fields:
+    lines:
+      name: Number of Lines
+      description: Number of log lines to retrieve (default 200)
+      example: 100
+      default: 200
+      selector:
+        number:
+          min: 10
+          max: 1000
+          mode: box
