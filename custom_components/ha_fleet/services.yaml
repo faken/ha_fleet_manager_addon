@@ -1,14 +1,29 @@
+# HA Fleet Services
 get_logs:
-  name: Get Home Assistant Logs
-  description: Retrieve recent Home Assistant log entries
+  name: Get logs
+  description: Retrieve Home Assistant log file contents
   fields:
     lines:
-      name: Number of Lines
-      description: Number of log lines to retrieve (default 200)
-      example: 100
+      name: Lines
+      description: Number of lines to retrieve from the end of the log file
+      required: false
       default: 200
+      example: 100
       selector:
         number:
           min: 10
           max: 1000
-          mode: box
+          step: 10
+
+update_integration:
+  name: Update integration
+  description: Update HA Fleet integration to the latest version from GitHub
+  fields:
+    branch:
+      name: Branch
+      description: GitHub branch to download from
+      required: false
+      default: "master"
+      example: "master"
+      selector:
+        text:
