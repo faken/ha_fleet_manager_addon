@@ -79,6 +79,34 @@ async def async_setup(hass, config):
                 
                 ha_version = hass.config.as_dict().get("version", "unknown")
                 
+                # Collect HA entity data
+                states = hass.states.async_all()
+                total_entities = len(states)
+                unavailable_entities = [s for s in states if s.state == 'unavailable']
+                unavailable_count = len(unavailable_entities)
+                unavailable_pct = round((unavailable_count / total_entities * 100) if total_entities > 0 else 0, 2)
+                
+                # Count automations (entities starting with automation.)
+                automation_count = len([s for s in states if s.entity_id.startswith('automation.')])
+                
+                # Get unique integrations/platforms
+                integrations = set()
+                for state in states:
+                    if hasattr(state, 'attributes') and 'friendly_name' in state.attributes:
+                        # Try to extract integration from entity_id domain
+                        domain = state.entity_id.split('.')[0]
+                        integrations.add(domain)
+                
+                # Unavailable entity details (for snapshot)
+                unavailable_details = []
+                for state in unavailable_entities[:100]:  # Limit to 100
+                    unavailable_details.append({
+                        "entity_id": state.entity_id,
+                        "domain": state.entity_id.split('.')[0],
+                        "platform": state.attributes.get('device_class', 'unknown'),
+                        "friendly_name": state.attributes.get('friendly_name', state.entity_id)
+                    })
+                
                 payload = {
                     "instance_id": instance_id,
                     "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
@@ -91,8 +119,14 @@ async def async_setup(hass, config):
                         "disk_usage_percent": round(disk.percent, 2),
                         "disk_used_gb": round(disk.used / (1024 * 1024 * 1024), 2),
                         "disk_total_gb": round(disk.total / (1024 * 1024 * 1024), 2),
-                        "boot_time_seconds": boot_time
-                    }
+                        "boot_time_seconds": boot_time,
+                        "total_entities": total_entities,
+                        "unavailable_entities": unavailable_count,
+                        "unavailable_entities_percent": unavailable_pct,
+                        "automation_count": automation_count,
+                        "integration_count": len(integrations)
+                    },
+                    "unavailable_entity_details": unavailable_details
                 }
                 
                 # Send to backend
