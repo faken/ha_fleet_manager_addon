@@ -1,0 +1,53 @@
+{
+  "title": "HA Fleet Agent",
+  "config": {
+    "step": {
+      "user": {
+        "title": "HA Fleet Agent einrichten",
+        "description": "Verbinde diese Home Assistant Instanz mit deinem HA Fleet Management Backend.\n\nDu benötigst:\n- Backend URL (z.B. http://192.168.1.100:8100)\n- API Token aus deinem Fleet Dashboard\n\nDer Agent sendet alle 5 Minuten System-Metriken.",
+        "data": {
+          "cloud_url": "Backend URL",
+          "api_key": "API Token",
+          "instance_name": "Instanzname (optional)"
+        },
+        "data_description": {
+          "cloud_url": "URL deines HA Fleet Backend-Servers",
+          "api_key": "Authentifizierungs-Token aus dem Fleet Management Dashboard",
+          "instance_name": "Anzeigename für diese Instanz (Standard: Home Assistant Standortname)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zum Backend fehlgeschlagen. Prüfe URL und Netzwerkverbindung.",
+      "invalid_auth": "Ungültiger API Token. Erstelle einen neuen im Backend Dashboard.",
+      "unknown": "Unerwarteter Fehler aufgetreten. Prüfe die Logs für Details.",
+      "timeout": "Verbindungs-Timeout. Läuft das Backend und ist es erreichbar?"
+    },
+    "abort": {
+      "already_configured": "Diese Home Assistant Instanz ist bereits mit HA Fleet Agent konfiguriert."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "HA Fleet Agent Einstellungen",
+        "description": "Aktualisiere deine HA Fleet Agent Konfiguration.\n\n⚠️ Diese Änderungen starten die Metrik-Erfassung neu.",
+        "data": {
+          "cloud_url": "Backend URL",
+          "api_key": "API Token",
+          "instance_name": "Instanzname"
+        },
+        "data_description": {
+          "cloud_url": "URL deines HA Fleet Backend-Servers",
+          "api_key": "Authentifizierungs-Token aus dem Fleet Management Dashboard",
+          "instance_name": "Anzeigename für diese Instanz"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zum Backend fehlgeschlagen. Prüfe URL und Netzwerkverbindung.",
+      "invalid_auth": "Ungültiger API Token. Erstelle einen neuen im Backend Dashboard.",
+      "unknown": "Unerwarteter Fehler aufgetreten. Prüfe die Logs für Details."
+    }
+  }
+}

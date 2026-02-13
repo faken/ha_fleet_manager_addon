@@ -49,17 +49,5 @@
       "invalid_auth": "Invalid API token. Generate a new one from the backend dashboard.",
       "unknown": "Unexpected error occurred. Check logs for details."
     }
-  },
-  "services": {
-    "get_logs": {
-      "name": "Get Home Assistant Logs",
-      "description": "Retrieve recent Home Assistant log entries.",
-      "fields": {
-        "lines": {
-          "name": "Number of Lines",
-          "description": "How many log lines to retrieve (default: 200)"
-        }
-      }
-    }
   }
 }
