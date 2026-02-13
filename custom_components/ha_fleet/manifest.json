@@ -1,0 +1,12 @@
+{
+  "domain": "ha_fleet",
+  "name": "HA Fleet Manager",
+  "version": "1.0.0",
+  "documentation": "https://github.com/faken/ha_fleet_manager_addon",
+  "issue_tracker": "https://github.com/faken/ha_fleet_manager_addon/issues",
+  "codeowners": ["@faken"],
+  "requirements": ["psutil==6.1.1", "aiohttp>=3.9.0"],
+  "dependencies": [],
+  "config_flow": false,
+  "iot_class": "cloud_push"
+}
