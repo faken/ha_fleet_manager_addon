@@ -74,6 +74,11 @@ The integration automatically collects and sends:
 - **Home Assistant Info:**
   - Core version
   - Instance ID (UUID)
+  - Total entities count
+  - Unavailable entities count & percentage
+  - Automation count
+  - Integration count
+  - Unavailable entity details (for troubleshooting)
 
 Metrics are sent every **60 seconds** to your Fleet Manager backend.
 
