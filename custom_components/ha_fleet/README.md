@@ -1,138 +1,138 @@
-# HA Fleet Integration
+# HA Fleet Agent Integration
 
-Home Assistant custom integration for the HA Fleet monitoring system.
+**Version:** 0.2.0
+
+Home Assistant custom integration that collects comprehensive system metrics and sends them to your HA Fleet Management backend.
 
 ## Features
 
-✅ **Automatic Log Access** - No manual YAML configuration needed!
-- Service: `ha_fleet.get_logs` - On-demand log retrieval
-- Sensor: `sensor.ha_fleet_log_tail` - Live log monitoring (updates every 5 min)
+### Metrics Collected
 
-✅ **Zero Configuration** - Works out of the box after installation
+**Core:**
+- Home Assistant version
+- Instance UUID
 
-✅ **Secure** - Only reads log files, no write access
+**Performance:**
+- CPU usage (%)
+- RAM usage (%, MB used/total)
+- Disk usage (%, GB used/total)  
+- System uptime
+
+**Entities:**
+- Total entities
+- Unavailable entities (count & %)
+- Automation count
+- Integration count
+
+**Security:** ✨ NEW in 0.2.0
+- SSL/TLS enabled status
+- Certificate expiry (days remaining)
+- Certificate issuer
+- Self-signed certificate detection
+
+**Database:** ✨ NEW in 0.2.0
+- Total database size (MB)
+- Recorder table size
+- Last purge date
 
 ## Installation
 
-### Option 1: Manual Installation
+### HACS (Recommended)
 
-1. **Copy to custom_components:**
-   ```bash
-   # On your Home Assistant machine:
-   cd /config
-   mkdir -p custom_components/ha_fleet
-   
-   # Copy these files:
-   # - __init__.py
-   # - sensor.py
-   # - config_flow.py
-   # - manifest.json
-   # - services.yaml
-   # - strings.json
-   ```
+1. Add this repository as a custom repository in HACS
+2. Search for "HA Fleet Agent" and install
+3. Restart Home Assistant
+4. Go to **Settings → Devices & Services → Add Integration**
+5. Search for "HA Fleet Agent"
+6. Enter your backend details:
+   - **Cloud URL:** `http://your-backend:8100`
+   - **API Key:** Your Fleet Management API token
+   - **Instance Name:** Optional friendly name
 
-2. **Restart Home Assistant**
+### Manual Installation
 
-3. **Add Integration:**
-   - Go to Settings → Devices & Services
-   - Click "Add Integration"
-   - Search for "HA Fleet Agent"
-   - Enter your Fleet Cloud URL and API Key
+1. Copy `custom_components/ha_fleet` to your HA config directory
+2. Restart Home Assistant
+3. Configure via UI (see above)
 
-### Option 2: HACS (Coming Soon)
+## Configuration
 
-When published to HACS:
-1. Open HACS
-2. Search for "HA Fleet"
-3. Install
-4. Restart HA
+The integration requires:
+- **Backend URL:** Where your HA Fleet Management backend is running
+- **API Token:** Generated from the backend user management
+- **Instance Name:** Optional friendly name for this instance
 
-## Usage
-
-### Service: ha_fleet.get_logs
-
-Call this service to retrieve logs on-demand:
-
+Example:
 ```yaml
-service: ha_fleet.get_logs
-data:
-  lines: 200  # Optional, default: 200
+# Configured via UI - no YAML needed
+Cloud URL: http://192.168.1.100:8100
+API Key: hafleet_xxxxxxxxxxxxx
+Instance Name: Living Room Pi
 ```
 
-**Returns:**
-```json
-{
-  "logs": "2024-02-12 20:00:00 INFO ...",
-  "total_lines": 5000,
-  "returned_lines": 200
-}
-```
+## How It Works
 
-### Sensor: sensor.ha_fleet_log_tail
+1. **Every 5 minutes**, the integration:
+   - Collects all system metrics
+   - Bundles them into a JSON payload
+   - Sends to your backend via HTTPS/HTTP
 
-The sensor automatically updates every 5 minutes and provides:
-- **State:** Number of lines (e.g., "200 lines")
-- **Attributes:**
-  - `logs`: Full log text (last 200 lines)
-  - `total_lines`: Total lines in log file
-  - `returned_lines`: Lines returned
-  - `log_file`: Path to log file
+2. **The backend:**
+   - Calculates health score (0-100)
+   - Stores metrics history
+   - Triggers alerts if needed
+   - Displays in dashboard
 
-**Example Dashboard Card:**
+3. **You see:**
+   - Real-time health scores
+   - 7-day metric trends
+   - Alerts for issues
+   - Security & database insights
 
-```yaml
-type: markdown
-content: >
-  ## HA Logs
+## Metrics Interval
 
-  {{ state_attr('sensor.ha_fleet_log_tail', 'logs') }}
-```
+Default: **5 minutes**
 
-## Agent Integration
-
-The Fleet Agent automatically detects and uses:
-1. **Service** (preferred) - `ha_fleet.get_logs`
-2. **Sensor** (fallback) - `sensor.ha_fleet_log_tail`
-
-No manual configuration needed!
+You can't currently change this via UI, but you can modify `METRICS_INTERVAL` in `__init__.py` if needed.
 
 ## Troubleshooting
 
-### Logs show "error"
+### No metrics appearing in dashboard
 
-Check that `/config/home-assistant.log` exists and is readable.
+1. Check HA logs for errors: **Settings → System → Logs**
+2. Look for `ha_fleet` entries
+3. Verify backend is reachable: `curl http://your-backend:8100/health`
+4. Check API token is valid
 
-### Service not found
+### SSL certificate not detected
 
-1. Verify integration is installed in `custom_components/ha_fleet/`
-2. Check HA logs for errors: `grep ha_fleet home-assistant.log`
-3. Restart Home Assistant
+- Ensure `external_url` is configured in HA configuration
+- Must be HTTPS (not HTTP)
+- Certificate must be accessible from HA instance
 
-### Sensor shows "unavailable"
+### Database size shows "Not available"
 
-Wait 5 minutes for first update, or restart Home Assistant.
-
-## Development
-
-To test locally:
-```bash
-# Copy to dev HA instance
-cp -r agent/* /path/to/ha/custom_components/ha_fleet/
-
-# Restart HA and check logs
-tail -f /config/home-assistant.log | grep ha_fleet
-```
-
-## Security Note
-
-This integration only **reads** the log file. It:
-- ✅ Has read-only access to `/config/home-assistant.log`
-- ✅ Does not modify any files
-- ✅ Does not access the network
-- ✅ Runs within Home Assistant's sandbox
+- Recorder integration must be enabled
+- Database file must be accessible
+- Check logs for permission errors
 
 ## Support
 
-- GitHub: https://github.com/your-org/ha-fleet-agent
-- Issues: https://github.com/your-org/ha-fleet-agent/issues
-- Docs: https://docs.hafleet.io
+- **Issues:** https://github.com/faken/ha_fleet_manager_addon/issues
+- **Backend:** https://github.com/faken/ha_monitor
+- **Docs:** https://github.com/faken/ha_monitor#readme
+
+## Changelog
+
+### 0.2.0 (2026-02-13)
+- ✨ Complete metrics collection rewrite
+- ✨ Security metrics (SSL certificate validation)
+- ✨ Database metrics (size, purge tracking)
+- ✨ Performance metrics (CPU, RAM, Disk)
+- ✨ Entity statistics (unavailable tracking)
+- ✅ Automatic 5-minute sync to backend
+- ✅ Config flow UI support
+- 🐛 Fixed metrics not being sent issue
+
+### 0.1.1
+- Initial release with basic log collection

@@ -2,11 +2,11 @@
   "domain": "ha_fleet",
   "name": "HA Fleet Agent",
   "codeowners": [],
-  "config_flow": false,
-  "documentation": "https://github.com/faken/ha_monitor",
-  "issue_tracker": "https://github.com/faken/ha_monitor/issues",
-  "requirements": [],
+  "config_flow": true,
+  "documentation": "https://github.com/faken/ha_fleet_manager_addon",
+  "issue_tracker": "https://github.com/faken/ha_fleet_manager_addon/issues",
+  "requirements": ["psutil==5.9.8"],
   "dependencies": [],
-  "version": "0.1.1",
-  "iot_class": "local_polling"
+  "version": "0.2.0",
+  "iot_class": "cloud_push"
 }
