@@ -68,9 +68,14 @@ class MetricsCollector:
         
         try:
             import psutil
+            import asyncio
+            from functools import partial
             
-            # CPU
-            cpu_percent = psutil.cpu_percent(interval=1)
+            # CPU - use executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            cpu_percent = await loop.run_in_executor(
+                None, partial(psutil.cpu_percent, interval=1)
+            )
             metrics["cpu_usage_avg"] = round(cpu_percent, 2)
             
             # RAM
