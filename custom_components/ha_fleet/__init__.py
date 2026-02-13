@@ -13,7 +13,7 @@ from .metrics_collector import MetricsCollector
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "ha_fleet"
-PLATFORMS = ["sensor"]
+PLATFORMS = []  # No platforms needed - metrics sent directly
 
 # Send metrics every 5 minutes
 METRICS_INTERVAL = timedelta(minutes=5)
