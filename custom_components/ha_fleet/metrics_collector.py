@@ -51,6 +51,12 @@ class MetricsCollector:
         except Exception as e:
             _LOGGER.warning(f"Failed to collect database metrics: {e}")
         
+        # Backup metrics
+        try:
+            metrics.update(await self._collect_backups())
+        except Exception as e:
+            _LOGGER.warning(f"Failed to collect backup metrics: {e}")
+        
         return metrics
     
     def _collect_core(self) -> Dict[str, Any]:
@@ -299,3 +305,103 @@ class MetricsCollector:
             return default_db
         
         return None
+    
+    async def _collect_backups(self) -> Dict[str, Any]:
+        """Collect backup information from Supervisor API."""
+        import aiohttp
+        
+        metrics = {
+            "backup_count": 0,
+            "last_backup_date": None,
+            "last_backup_age_days": None,
+            "last_backup_age_hours": None,
+            "total_backup_size_mb": 0,
+            "oldest_backup_date": None,
+        }
+        
+        # Check if Supervisor token is available
+        supervisor_token = os.getenv("SUPERVISOR_TOKEN")
+        if not supervisor_token:
+            _LOGGER.debug("Supervisor token not available - skipping backup metrics")
+            return metrics
+        
+        supervisor_url = "http://supervisor/backups"
+        
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                headers = {
+                    "Authorization": f"Bearer {supervisor_token}",
+                    "Content-Type": "application/json"
+                }
+                
+                async with session.get(supervisor_url, headers=headers) as resp:
+                    if resp.status != 200:
+                        _LOGGER.debug(f"Supervisor backups endpoint returned {resp.status}")
+                        return metrics
+                    
+                    data = await resp.json()
+                    backups = data.get("data", {}).get("backups", [])
+                    
+                    if not backups:
+                        _LOGGER.debug("No backups found")
+                        return metrics
+                    
+                    # Count backups
+                    metrics["backup_count"] = len(backups)
+                    
+                    # Sort by date (newest first)
+                    sorted_backups = sorted(
+                        backups,
+                        key=lambda b: b.get("date", ""),
+                        reverse=True
+                    )
+                    
+                    # Get last backup info
+                    if sorted_backups:
+                        last_backup = sorted_backups[0]
+                        last_date_str = last_backup.get("date")
+                        
+                        if last_date_str:
+                            try:
+                                # Parse ISO timestamp
+                                last_date = datetime.fromisoformat(last_date_str.replace("Z", "+00:00"))
+                                metrics["last_backup_date"] = last_date.isoformat()
+                                
+                                # Calculate age in hours and days
+                                now = datetime.now(timezone.utc)
+                                age_delta = now - last_date
+                                metrics["last_backup_age_hours"] = round(age_delta.total_seconds() / 3600, 1)
+                                metrics["last_backup_age_days"] = round(age_delta.total_seconds() / 86400, 1)
+                                
+                            except Exception as e:
+                                _LOGGER.debug(f"Failed to parse backup date {last_date_str}: {e}")
+                    
+                    # Get oldest backup
+                    if sorted_backups:
+                        oldest_backup = sorted_backups[-1]
+                        oldest_date_str = oldest_backup.get("date")
+                        
+                        if oldest_date_str:
+                            try:
+                                oldest_date = datetime.fromisoformat(oldest_date_str.replace("Z", "+00:00"))
+                                metrics["oldest_backup_date"] = oldest_date.isoformat()
+                            except Exception as e:
+                                _LOGGER.debug(f"Failed to parse oldest backup date: {e}")
+                    
+                    # Calculate total size
+                    total_size_bytes = sum(b.get("size", 0) for b in backups)
+                    metrics["total_backup_size_mb"] = round(total_size_bytes / (1024 * 1024), 1)
+                    
+                    _LOGGER.debug(
+                        f"Collected backup metrics: {metrics['backup_count']} backups, "
+                        f"last: {metrics['last_backup_age_hours']}h ago, "
+                        f"total size: {metrics['total_backup_size_mb']} MB"
+                    )
+                    
+        except aiohttp.ClientError as e:
+            _LOGGER.debug(f"Failed to fetch backups from Supervisor: {e}")
+        except Exception as e:
+            _LOGGER.warning(f"Unexpected error collecting backup metrics: {e}", exc_info=True)
+        
+        return metrics
