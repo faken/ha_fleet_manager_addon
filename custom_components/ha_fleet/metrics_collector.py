@@ -150,6 +150,8 @@ class MetricsCollector:
     
     def _collect_entities(self) -> Dict[str, Any]:
         """Collect entity statistics and unavailable entity details."""
+        from homeassistant.helpers import entity_registry as er
+        
         states = self.hass.states.async_all()
         
         total = len(states)
@@ -166,13 +168,21 @@ class MetricsCollector:
         unavailable = len(unavailable_states)
         unavailable_percent = (unavailable / total * 100) if total > 0 else 0
         
+        # Get entity registry to lookup platforms
+        entity_registry = er.async_get(self.hass)
+        
         # Collect detailed information about unavailable entities
         unavailable_details = []
         for state in unavailable_states:
-            # Get integration/platform from attributes or entity registry
+            # Get integration/platform from entity registry (most reliable)
             platform = "unknown"
-            if hasattr(state, 'attributes'):
-                # Try to get from attributes
+            
+            # Try entity registry first (most accurate)
+            entity_entry = entity_registry.async_get(state.entity_id)
+            if entity_entry and entity_entry.platform:
+                platform = entity_entry.platform
+            # Fallback to attributes
+            elif hasattr(state, 'attributes'):
                 if 'integration' in state.attributes:
                     platform = state.attributes['integration']
                 elif 'platform' in state.attributes:
