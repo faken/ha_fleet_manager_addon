@@ -389,7 +389,7 @@ async def _get_logs(hass: HomeAssistant, params: dict) -> dict:
         return await _get_logs_from_file(hass, params)
     
     # Use Supervisor API to get logs
-    lines = params.get("lines", 200)
+    lines = params.get("lines", 1000)
     supervisor_url = f"http://supervisor/core/logs"
     
     try:
@@ -434,7 +434,7 @@ async def _get_logs_from_file(hass: HomeAssistant, params: dict) -> dict:
     """Get logs from file (fallback for non-Supervisor installs)."""
     import os
     
-    lines = params.get("lines", 200)
+    lines = params.get("lines", 1000)
     
     # Try multiple possible log locations
     possible_paths = [
