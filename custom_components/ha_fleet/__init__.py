@@ -18,8 +18,8 @@ PLATFORMS = []  # No platforms needed - metrics sent directly
 # Send metrics every 5 minutes
 METRICS_INTERVAL = timedelta(minutes=5)
 
-# Poll for commands every 60 seconds
-COMMAND_POLL_INTERVAL = timedelta(seconds=60)
+# Poll for commands every 20 seconds (faster than frontend 30s timeout)
+COMMAND_POLL_INTERVAL = timedelta(seconds=20)
 
 
 async def async_setup(hass: HomeAssistant, config: dict):
@@ -113,7 +113,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass, poll_commands, COMMAND_POLL_INTERVAL
     )
     
-    _LOGGER.info("HA Fleet command polling started (every 60s)")
+    _LOGGER.info("HA Fleet command polling started (every 20s)")
     
     # Listen for config changes
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
