@@ -380,13 +380,89 @@ async def _get_backup_info(hass: HomeAssistant, params: dict) -> dict:
 
 
 async def _get_logs(hass: HomeAssistant, params: dict) -> dict:
-    """Get Home Assistant logs."""
+    """Get Home Assistant logs via Supervisor API."""
+    import os
+    
+    supervisor_token = os.getenv("SUPERVISOR_TOKEN")
+    if not supervisor_token:
+        # Fallback: Try to read log file directly (non-Supervisor installs)
+        return await _get_logs_from_file(hass, params)
+    
+    # Use Supervisor API to get logs
     lines = params.get("lines", 200)
-    log_file = hass.config.path("home-assistant.log")
+    supervisor_url = f"http://supervisor/core/logs"
     
     try:
-        with open(log_file, "r") as f:
-            all_lines = f.readlines()
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            headers = {
+                "Authorization": f"Bearer {supervisor_token}",
+                "Content-Type": "application/json"
+            }
+            
+            async with session.get(supervisor_url, headers=headers) as resp:
+                if resp.status == 200:
+                    logs_text = await resp.text()
+                    
+                    # Split into lines and get last N
+                    all_lines = logs_text.split('\n')
+                    recent_logs = all_lines[-lines:] if len(all_lines) > lines else all_lines
+                    logs_result = '\n'.join(recent_logs)
+                    
+                    return {
+                        "success": True,
+                        "message": f"Retrieved {len(recent_logs)} log lines",
+                        "logs": logs_result,
+                        "total_lines": len(all_lines),
+                        "returned_lines": len(recent_logs)
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "message": f"Supervisor API returned {resp.status}"
+                    }
+                    
+    except Exception as e:
+        _LOGGER.error(f"Error getting logs from Supervisor: {e}")
+        return {
+            "success": False,
+            "message": f"Error: {str(e)}"
+        }
+
+
+async def _get_logs_from_file(hass: HomeAssistant, params: dict) -> dict:
+    """Get logs from file (fallback for non-Supervisor installs)."""
+    import os
+    
+    lines = params.get("lines", 200)
+    
+    # Try multiple possible log locations
+    possible_paths = [
+        "/config/home-assistant.log",
+        hass.config.path("home-assistant.log"),
+        "/var/log/homeassistant/home-assistant.log",
+        os.path.expanduser("~/.homeassistant/home-assistant.log")
+    ]
+    
+    log_file = None
+    for path in possible_paths:
+        if os.path.exists(path):
+            log_file = path
+            break
+    
+    if not log_file:
+        return {
+            "success": False,
+            "message": "Log file not found. Use Supervisor API on HA OS/Supervised."
+        }
+    
+    try:
+        # Use executor to avoid blocking the event loop
+        def read_logs():
+            with open(log_file, "r") as f:
+                return f.readlines()
+        
+        all_lines = await hass.async_add_executor_job(read_logs)
         
         recent_logs = all_lines[-lines:] if len(all_lines) > lines else all_lines
         logs_text = ''.join(recent_logs)
@@ -399,7 +475,7 @@ async def _get_logs(hass: HomeAssistant, params: dict) -> dict:
             "returned_lines": len(recent_logs)
         }
     except Exception as e:
-        _LOGGER.error(f"Error reading logs: {e}")
+        _LOGGER.error(f"Error reading logs from file: {e}")
         return {
             "success": False,
             "message": f"Error reading logs: {str(e)}"
