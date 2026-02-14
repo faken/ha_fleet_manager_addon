@@ -54,13 +54,53 @@ class MetricsCollector:
         return metrics
     
     def _collect_core(self) -> Dict[str, Any]:
-        """Collect core version information."""
+        """Collect core version information and system information."""
         from homeassistant.const import __version__ as ha_version
+        import platform
+        import os
         
-        return {
+        metrics = {
             "core_version": ha_version,
             "config_dir": self.hass.config.config_dir,
         }
+        
+        # Collect system/hardware information
+        try:
+            # Platform information
+            metrics["system_platform"] = platform.system()  # Linux, Darwin, Windows
+            metrics["system_machine"] = platform.machine()  # x86_64, aarch64, armv7l, etc.
+            metrics["system_processor"] = platform.processor() or platform.machine()
+            
+            # Try to get more detailed CPU info from /proc/cpuinfo (Linux only)
+            if platform.system() == "Linux":
+                try:
+                    with open("/proc/cpuinfo", "r") as f:
+                        cpuinfo = f.read()
+                        
+                    # Extract model name
+                    for line in cpuinfo.split("\n"):
+                        if "model name" in line.lower():
+                            cpu_model = line.split(":")[1].strip()
+                            metrics["cpu_model"] = cpu_model
+                            break
+                        elif "hardware" in line.lower():  # ARM devices
+                            hardware = line.split(":")[1].strip()
+                            metrics["cpu_model"] = hardware
+                            break
+                except:
+                    pass  # Fallback to platform.processor()
+            
+            # If no cpu_model found, use processor or machine
+            if "cpu_model" not in metrics:
+                metrics["cpu_model"] = metrics["system_processor"] or metrics["system_machine"]
+            
+            # Python version
+            metrics["python_version"] = platform.python_version()
+            
+        except Exception as e:
+            _LOGGER.warning(f"Failed to collect system information: {e}")
+        
+        return metrics
     
     async def _collect_performance(self) -> Dict[str, Any]:
         """Collect performance metrics (CPU, RAM, Disk)."""
