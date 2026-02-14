@@ -78,14 +78,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def send_metrics(now=None):
         """Collect and send metrics to cloud."""
         try:
+            # Only send if HA is fully running (all integrations loaded)
+            if hass.state.value != "RUNNING":
+                _LOGGER.debug(f"HA not fully running yet (state: {hass.state.value}), skipping metrics")
+                return
+            
             await _send_metrics_to_cloud(hass, entry)
         except Exception as e:
             _LOGGER.error(f"Error sending metrics: {e}", exc_info=True)
     
-    # Send immediately on startup
-    hass.async_create_task(send_metrics())
+    # Don't send immediately - wait for first interval (HA needs time to load all integrations)
+    # This prevents sending incomplete entity counts (e.g. 68 instead of 2184)
+    _LOGGER.info("HA Fleet will send first metrics in 5 minutes (waiting for all integrations to load)")
     
-    # Then send every 5 minutes
+    # Send every 5 minutes
     hass.data[DOMAIN][entry.entry_id]["unsub"] = async_track_time_interval(
         hass, send_metrics, METRICS_INTERVAL
     )

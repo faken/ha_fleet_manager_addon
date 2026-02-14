@@ -107,6 +107,15 @@ class MetricsCollector:
         states = self.hass.states.async_all()
         
         total = len(states)
+        
+        # Sanity check: if entity count is suspiciously low, HA might still be loading
+        # Log warning but still report the data (backend can decide what to do)
+        if total < 1000:
+            _LOGGER.warning(
+                f"Entity count ({total}) is suspiciously low - "
+                f"HA might still be loading integrations"
+            )
+        
         unavailable = len([s for s in states if s.state in ("unavailable", "unknown")])
         unavailable_percent = (unavailable / total * 100) if total > 0 else 0
         
