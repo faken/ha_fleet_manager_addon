@@ -115,23 +115,23 @@ class MetricsCollector:
                 metrics["ram_usage_percent"] = round(memory.percent, 2)
                 metrics["ram_used_mb"] = round(memory.used / (1024 * 1024), 2)
                 metrics["ram_total_mb"] = round(memory.total / (1024 * 1024), 2)
-            
-            # Disk
-            disk = psutil.disk_usage(self.hass.config.config_dir)
-            metrics["disk_usage_percent"] = round(disk.percent, 2)
-            metrics["disk_used_gb"] = round(disk.used / (1024 ** 3), 2)
-            metrics["disk_total_gb"] = round(disk.total / (1024 ** 3), 2)
-            
-            # Boot time (Unix timestamp when system booted)
-            boot_time = psutil.boot_time()
-            uptime_seconds = int(datetime.now().timestamp() - boot_time)
-            # Send absolute boot timestamp, not duration
-            metrics["boot_time_seconds"] = int(boot_time)
-            
-        except ImportError:
-            _LOGGER.warning("psutil not available - performance metrics disabled")
-        except Exception as e:
-            _LOGGER.error(f"Error collecting performance metrics: {e}")
+                
+                # Disk
+                disk = psutil.disk_usage(self.hass.config.config_dir)
+                metrics["disk_usage_percent"] = round(disk.percent, 2)
+                metrics["disk_used_gb"] = round(disk.used / (1024 ** 3), 2)
+                metrics["disk_total_gb"] = round(disk.total / (1024 ** 3), 2)
+                
+                # Boot time (Unix timestamp when system booted)
+                boot_time = psutil.boot_time()
+                uptime_seconds = int(datetime.now().timestamp() - boot_time)
+                # Send absolute boot timestamp, not duration
+                metrics["boot_time_seconds"] = int(boot_time)
+                
+            except ImportError:
+                _LOGGER.warning("psutil not available - performance metrics disabled")
+            except Exception as e:
+                _LOGGER.error(f"Error collecting performance metrics with psutil: {e}")
         
         return metrics
     
