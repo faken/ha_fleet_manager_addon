@@ -90,10 +90,11 @@ class MetricsCollector:
             metrics["disk_used_gb"] = round(disk.used / (1024 ** 3), 2)
             metrics["disk_total_gb"] = round(disk.total / (1024 ** 3), 2)
             
-            # Boot time
+            # Boot time (Unix timestamp when system booted)
             boot_time = psutil.boot_time()
             uptime_seconds = int(datetime.now().timestamp() - boot_time)
-            metrics["boot_time_seconds"] = uptime_seconds
+            # Send absolute boot timestamp, not duration
+            metrics["boot_time_seconds"] = int(boot_time)
             
         except ImportError:
             _LOGGER.warning("psutil not available - performance metrics disabled")
