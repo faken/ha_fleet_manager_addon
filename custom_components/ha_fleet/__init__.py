@@ -301,10 +301,14 @@ async def _execute_backup(hass: HomeAssistant, params: dict) -> dict:
     backup_name = params.get("name", f"Fleet backup {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     
     supervisor_url = "http://supervisor/backups/new/full"
-    payload = {"name": backup_name}
-    
+    # Supervisor API expects simple payload - just name (optional)
+    payload = {}
+    if backup_name:
+        payload["name"] = backup_name
     if "password" in params:
         payload["password"] = params["password"]
+    
+    _LOGGER.debug(f"Backup request payload: {payload}")
     
     try:
         timeout = aiohttp.ClientTimeout(total=600)  # 10 minutes for backup
@@ -331,11 +335,12 @@ async def _execute_backup(hass: HomeAssistant, params: dict) -> dict:
                     }
                 else:
                     error_text = await resp.text()
-                    _LOGGER.error(f"Backup failed with status {resp.status}: {error_text}")
+                    _LOGGER.error(f"❌ Backup failed with status {resp.status}: {error_text}")
+                    _LOGGER.error(f"   Request payload was: {payload}")
                     
                     return {
                         "success": False,
-                        "message": f"Supervisor API error: {resp.status}"
+                        "message": f"Supervisor API error {resp.status}: {error_text[:200]}"
                     }
                     
     except asyncio.TimeoutError:
