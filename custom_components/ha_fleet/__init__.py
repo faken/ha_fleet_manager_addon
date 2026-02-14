@@ -18,6 +18,9 @@ PLATFORMS = []  # No platforms needed - metrics sent directly
 # Send metrics every 5 minutes
 METRICS_INTERVAL = timedelta(minutes=5)
 
+# Poll for commands every 60 seconds
+COMMAND_POLL_INTERVAL = timedelta(seconds=60)
+
 
 async def async_setup(hass: HomeAssistant, config: dict):
     """Set up the HA Fleet component (legacy YAML config)."""
@@ -98,6 +101,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     _LOGGER.info("HA Fleet metrics collection started (every 5min)")
     
+    # Start command polling (every 60 seconds)
+    async def poll_commands(now=None):
+        """Poll cloud for pending commands and execute them."""
+        try:
+            await _poll_and_execute_commands(hass, entry)
+        except Exception as e:
+            _LOGGER.error(f"Error polling commands: {e}", exc_info=True)
+    
+    hass.data[DOMAIN][entry.entry_id]["unsub_commands"] = async_track_time_interval(
+        hass, poll_commands, COMMAND_POLL_INTERVAL
+    )
+    
+    _LOGGER.info("HA Fleet command polling started (every 60s)")
+    
     # Listen for config changes
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     
@@ -118,6 +135,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if "unsub" in hass.data[DOMAIN][entry.entry_id]:
         hass.data[DOMAIN][entry.entry_id]["unsub"]()
     
+    # Stop command polling
+    if "unsub_commands" in hass.data[DOMAIN][entry.entry_id]:
+        hass.data[DOMAIN][entry.entry_id]["unsub_commands"]()
+    
     # Unload platforms
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     
@@ -125,6 +146,265 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id)
     
     return unload_ok
+
+
+async def _poll_and_execute_commands(hass: HomeAssistant, entry: ConfigEntry):
+    """Poll cloud for pending commands and execute them."""
+    import os
+    from datetime import datetime, timezone
+    
+    config = hass.data[DOMAIN][entry.entry_id]
+    cloud_url = config["cloud_url"].rstrip("/")
+    api_key = config["api_key"]
+    
+    # Get instance ID
+    instance_id = hass.data.get("core.uuid")
+    if not instance_id:
+        _LOGGER.warning("No instance UUID found - cannot poll commands")
+        return
+    
+    # Fetch pending commands
+    url = f"{cloud_url}/api/v1/commands?instance_id={instance_id}"
+    
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            async with session.get(url, headers=headers) as response:
+                if response.status != 200:
+                    _LOGGER.debug(f"Command poll returned {response.status}")
+                    return
+                
+                data = await response.json()
+                commands = data.get("commands", [])
+                
+                if not commands:
+                    _LOGGER.debug("No pending commands")
+                    return
+                
+                _LOGGER.info(f"Found {len(commands)} pending command(s)")
+                
+                # Execute each command
+                for cmd in commands:
+                    command_id = cmd.get("id")
+                    command_type = cmd.get("command_type")
+                    params = cmd.get("params", {})
+                    
+                    _LOGGER.info(f"Executing command {command_id}: {command_type}")
+                    
+                    # Execute command
+                    result = await _execute_command(hass, command_type, params)
+                    
+                    # Report result back to cloud
+                    await _report_command_result(
+                        session, cloud_url, api_key, instance_id,
+                        command_id, result
+                    )
+                    
+    except asyncio.TimeoutError:
+        _LOGGER.warning("Timeout polling for commands")
+    except aiohttp.ClientError as e:
+        _LOGGER.warning(f"HTTP error polling commands: {e}")
+    except Exception as e:
+        _LOGGER.error(f"Unexpected error polling commands: {e}", exc_info=True)
+
+
+async def _execute_command(hass: HomeAssistant, command_type: str, params: dict) -> dict:
+    """Execute a command locally and return result."""
+    import os
+    from datetime import datetime
+    
+    try:
+        if command_type == "trigger_backup":
+            # Execute backup via Supervisor API
+            return await _execute_backup(hass, params)
+        
+        elif command_type == "get_backup_info":
+            # Get info about a specific backup
+            return await _get_backup_info(hass, params)
+        
+        elif command_type == "restart_homeassistant":
+            # Restart HA Core
+            await hass.services.async_call("homeassistant", "restart")
+            return {
+                "success": True,
+                "message": "Home Assistant restarting..."
+            }
+        
+        else:
+            _LOGGER.warning(f"Unknown command type: {command_type}")
+            return {
+                "success": False,
+                "message": f"Unknown command type: {command_type}"
+            }
+            
+    except Exception as e:
+        _LOGGER.error(f"Command execution failed: {e}", exc_info=True)
+        return {
+            "success": False,
+            "message": f"Execution error: {str(e)}"
+        }
+
+
+async def _execute_backup(hass: HomeAssistant, params: dict) -> dict:
+    """Execute backup via Supervisor API."""
+    import os
+    from datetime import datetime
+    
+    supervisor_token = os.getenv("SUPERVISOR_TOKEN")
+    if not supervisor_token:
+        return {
+            "success": False,
+            "message": "Supervisor not available (not running on HA OS/Supervised)"
+        }
+    
+    backup_name = params.get("name", f"Fleet backup {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    
+    supervisor_url = "http://supervisor/backups/new/full"
+    payload = {"name": backup_name}
+    
+    if "password" in params:
+        payload["password"] = params["password"]
+    
+    try:
+        timeout = aiohttp.ClientTimeout(total=600)  # 10 minutes for backup
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            headers = {
+                "Authorization": f"Bearer {supervisor_token}",
+                "Content-Type": "application/json"
+            }
+            
+            _LOGGER.info(f"Creating backup: {backup_name}")
+            
+            async with session.post(supervisor_url, json=payload, headers=headers) as resp:
+                if resp.status in [200, 201]:
+                    data = await resp.json()
+                    backup_slug = data.get("data", {}).get("slug", "unknown")
+                    
+                    _LOGGER.info(f"✅ Backup created successfully: {backup_slug}")
+                    
+                    return {
+                        "success": True,
+                        "message": f"Backup created: {backup_name}",
+                        "slug": backup_slug,
+                        "name": backup_name
+                    }
+                else:
+                    error_text = await resp.text()
+                    _LOGGER.error(f"Backup failed with status {resp.status}: {error_text}")
+                    
+                    return {
+                        "success": False,
+                        "message": f"Supervisor API error: {resp.status}"
+                    }
+                    
+    except asyncio.TimeoutError:
+        _LOGGER.error("Backup creation timed out after 10 minutes")
+        return {
+            "success": False,
+            "message": "Backup creation timed out"
+        }
+    except Exception as e:
+        _LOGGER.error(f"Backup error: {e}", exc_info=True)
+        return {
+            "success": False,
+            "message": f"Backup error: {str(e)}"
+        }
+
+
+async def _get_backup_info(hass: HomeAssistant, params: dict) -> dict:
+    """Get info about a specific backup via Supervisor API."""
+    import os
+    
+    supervisor_token = os.getenv("SUPERVISOR_TOKEN")
+    if not supervisor_token:
+        return {
+            "success": False,
+            "message": "Supervisor not available"
+        }
+    
+    slug = params.get("slug")
+    if not slug:
+        return {
+            "success": False,
+            "message": "Missing backup slug parameter"
+        }
+    
+    supervisor_url = f"http://supervisor/backups/{slug}/info"
+    
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            headers = {
+                "Authorization": f"Bearer {supervisor_token}",
+                "Content-Type": "application/json"
+            }
+            
+            async with session.get(supervisor_url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    backup_data = data.get("data", {})
+                    
+                    return {
+                        "success": True,
+                        "message": "Backup info retrieved",
+                        "data": backup_data
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "message": f"Backup not found: {resp.status}"
+                    }
+                    
+    except Exception as e:
+        _LOGGER.error(f"Error getting backup info: {e}")
+        return {
+            "success": False,
+            "message": f"Error: {str(e)}"
+        }
+
+
+async def _report_command_result(
+    session: aiohttp.ClientSession,
+    cloud_url: str,
+    api_key: str,
+    instance_id: str,
+    command_id: int,
+    result: dict
+):
+    """Report command execution result back to cloud."""
+    from datetime import datetime, timezone
+    
+    url = f"{cloud_url}/api/v1/commands/{command_id}/result"
+    
+    status = "success" if result.get("success") else "failed"
+    
+    payload = {
+        "instance_id": instance_id,
+        "status": status,
+        "result": result if result.get("success") else None,
+        "error": result.get("message") if not result.get("success") else None
+    }
+    
+    try:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        async with session.post(url, json=payload, headers=headers) as resp:
+            if resp.status == 200:
+                _LOGGER.info(f"✅ Command {command_id} result reported: {status}")
+            else:
+                error_text = await resp.text()
+                _LOGGER.error(f"Failed to report command result: {resp.status} - {error_text}")
+                
+    except Exception as e:
+        _LOGGER.error(f"Error reporting command result: {e}")
 
 
 async def _send_metrics_to_cloud(hass: HomeAssistant, entry: ConfigEntry):
