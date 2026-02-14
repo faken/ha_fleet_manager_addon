@@ -71,18 +71,54 @@ class MetricsCollector:
             import asyncio
             from functools import partial
             
-            # CPU - use executor to avoid blocking
-            loop = asyncio.get_event_loop()
-            cpu_percent = await loop.run_in_executor(
-                None, partial(psutil.cpu_percent, interval=1)
-            )
-            metrics["cpu_usage_avg"] = round(cpu_percent, 2)
+            # CPU - prefer HA system sensors over psutil (psutil shows container metrics, not host)
+            cpu_sensor = self.hass.states.get("sensor.wasp_store_cpu_auslastung_gesamt")
+            if cpu_sensor and cpu_sensor.state not in ("unknown", "unavailable", None):
+                try:
+                    metrics["cpu_usage_avg"] = round(float(cpu_sensor.state), 2)
+                    _LOGGER.debug(f"Using HA CPU sensor: {cpu_sensor.state}%")
+                except (ValueError, TypeError) as e:
+                    _LOGGER.warning(f"Failed to parse CPU sensor, using psutil: {e}")
+                    loop = asyncio.get_event_loop()
+                    cpu_percent = await loop.run_in_executor(
+                        None, partial(psutil.cpu_percent, interval=1)
+                    )
+                    metrics["cpu_usage_avg"] = round(cpu_percent, 2)
+            else:
+                _LOGGER.debug("No HA CPU sensor found, using psutil")
+                loop = asyncio.get_event_loop()
+                cpu_percent = await loop.run_in_executor(
+                    None, partial(psutil.cpu_percent, interval=1)
+                )
+                metrics["cpu_usage_avg"] = round(cpu_percent, 2)
             
-            # RAM
-            memory = psutil.virtual_memory()
-            metrics["ram_usage_percent"] = round(memory.percent, 2)
-            metrics["ram_used_mb"] = round(memory.used / (1024 * 1024), 2)
-            metrics["ram_total_mb"] = round(memory.total / (1024 * 1024), 2)
+            # RAM - prefer HA system sensors over psutil
+            ram_percent_sensor = self.hass.states.get("sensor.wasp_store_speichernutzung_real")
+            ram_total_sensor = self.hass.states.get("sensor.wasp_store_speicher_gesamt_real")
+            
+            if (ram_percent_sensor and ram_percent_sensor.state not in ("unknown", "unavailable", None) and
+                ram_total_sensor and ram_total_sensor.state not in ("unknown", "unavailable", None)):
+                try:
+                    ram_percent = float(ram_percent_sensor.state)
+                    ram_total_mb = float(ram_total_sensor.state)
+                    ram_used_mb = ram_total_mb * (ram_percent / 100)
+                    
+                    metrics["ram_usage_percent"] = round(ram_percent, 2)
+                    metrics["ram_used_mb"] = round(ram_used_mb, 2)
+                    metrics["ram_total_mb"] = round(ram_total_mb, 2)
+                    _LOGGER.debug(f"Using HA RAM sensors: {ram_percent}% of {ram_total_mb}MB")
+                except (ValueError, TypeError) as e:
+                    _LOGGER.warning(f"Failed to parse RAM sensors, using psutil: {e}")
+                    memory = psutil.virtual_memory()
+                    metrics["ram_usage_percent"] = round(memory.percent, 2)
+                    metrics["ram_used_mb"] = round(memory.used / (1024 * 1024), 2)
+                    metrics["ram_total_mb"] = round(memory.total / (1024 * 1024), 2)
+            else:
+                _LOGGER.debug("No HA RAM sensors found, using psutil")
+                memory = psutil.virtual_memory()
+                metrics["ram_usage_percent"] = round(memory.percent, 2)
+                metrics["ram_used_mb"] = round(memory.used / (1024 * 1024), 2)
+                metrics["ram_total_mb"] = round(memory.total / (1024 * 1024), 2)
             
             # Disk
             disk = psutil.disk_usage(self.hass.config.config_dir)
