@@ -1,7 +1,7 @@
 """HA Fleet Agent Integration."""
 import logging
 import asyncio
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
@@ -216,7 +216,6 @@ async def _poll_and_execute_commands(hass: HomeAssistant, entry: ConfigEntry):
 async def _execute_command(hass: HomeAssistant, command_type: str, params: dict) -> dict:
     """Execute a command locally and return result."""
     import os
-    from datetime import datetime
     
     try:
         if command_type == "trigger_backup":
@@ -227,6 +226,10 @@ async def _execute_command(hass: HomeAssistant, command_type: str, params: dict)
             # Get info about a specific backup
             return await _get_backup_info(hass, params)
         
+        elif command_type == "get_logs":
+            # Get Home Assistant logs
+            return await _get_logs(hass, params)
+        
         elif command_type == "restart_homeassistant":
             # Restart HA Core
             await hass.services.async_call("homeassistant", "restart")
@@ -234,6 +237,14 @@ async def _execute_command(hass: HomeAssistant, command_type: str, params: dict)
                 "success": True,
                 "message": "Home Assistant restarting..."
             }
+        
+        elif command_type == "list_automations":
+            # List all automations
+            return await _list_automations(hass, params)
+        
+        elif command_type == "update_core":
+            # Update HA Core
+            return await _execute_update(hass, params)
         
         else:
             _LOGGER.warning(f"Unknown command type: {command_type}")
@@ -365,6 +376,142 @@ async def _get_backup_info(hass: HomeAssistant, params: dict) -> dict:
         return {
             "success": False,
             "message": f"Error: {str(e)}"
+        }
+
+
+async def _get_logs(hass: HomeAssistant, params: dict) -> dict:
+    """Get Home Assistant logs."""
+    lines = params.get("lines", 200)
+    log_file = hass.config.path("home-assistant.log")
+    
+    try:
+        with open(log_file, "r") as f:
+            all_lines = f.readlines()
+        
+        recent_logs = all_lines[-lines:] if len(all_lines) > lines else all_lines
+        logs_text = ''.join(recent_logs)
+        
+        return {
+            "success": True,
+            "message": f"Retrieved {len(recent_logs)} log lines",
+            "logs": logs_text,
+            "total_lines": len(all_lines),
+            "returned_lines": len(recent_logs)
+        }
+    except Exception as e:
+        _LOGGER.error(f"Error reading logs: {e}")
+        return {
+            "success": False,
+            "message": f"Error reading logs: {str(e)}"
+        }
+
+
+async def _list_automations(hass: HomeAssistant, params: dict) -> dict:
+    """List all automations."""
+    try:
+        automations = []
+        
+        # Get all automation entities
+        for entity_id in hass.states.async_entity_ids("automation"):
+            state = hass.states.get(entity_id)
+            if state:
+                automations.append({
+                    "entity_id": entity_id,
+                    "name": state.attributes.get("friendly_name", entity_id),
+                    "state": state.state,
+                    "last_triggered": str(state.attributes.get("last_triggered", "Never"))
+                })
+        
+        return {
+            "success": True,
+            "message": f"Found {len(automations)} automations",
+            "automations": automations,
+            "count": len(automations)
+        }
+    except Exception as e:
+        _LOGGER.error(f"Error listing automations: {e}")
+        return {
+            "success": False,
+            "message": f"Error: {str(e)}"
+        }
+
+
+async def _execute_update(hass: HomeAssistant, params: dict) -> dict:
+    """Execute Home Assistant Core update via Supervisor API."""
+    import os
+    
+    supervisor_token = os.getenv("SUPERVISOR_TOKEN")
+    if not supervisor_token:
+        return {
+            "success": False,
+            "message": "Supervisor not available (not running on HA OS/Supervised)"
+        }
+    
+    target_version = params.get("target_version")  # None = latest
+    backup_before = params.get("backup_before", True)
+    
+    # Step 1: Create backup if requested
+    if backup_before:
+        _LOGGER.info("Creating backup before update...")
+        backup_result = await _execute_backup(hass, {
+            "name": f"Pre-update backup {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        })
+        
+        if not backup_result.get("success"):
+            return {
+                "success": False,
+                "message": f"Backup failed: {backup_result.get('message')}"
+            }
+        
+        _LOGGER.info(f"Pre-update backup created: {backup_result.get('slug')}")
+    
+    # Step 2: Trigger update
+    supervisor_url = "http://supervisor/core/update"
+    
+    payload = {}
+    if target_version:
+        payload["version"] = target_version
+    
+    try:
+        timeout = aiohttp.ClientTimeout(total=300)  # 5 minutes for update
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            headers = {
+                "Authorization": f"Bearer {supervisor_token}",
+                "Content-Type": "application/json"
+            }
+            
+            _LOGGER.info(f"Starting HA Core update to {target_version or 'latest'}...")
+            
+            async with session.post(supervisor_url, json=payload, headers=headers) as resp:
+                if resp.status in [200, 201]:
+                    _LOGGER.info("✅ Update initiated successfully")
+                    
+                    return {
+                        "success": True,
+                        "message": f"Update initiated to {target_version or 'latest'}",
+                        "target_version": target_version,
+                        "backup_created": backup_before
+                    }
+                else:
+                    error_text = await resp.text()
+                    _LOGGER.error(f"Update failed with status {resp.status}: {error_text}")
+                    
+                    return {
+                        "success": False,
+                        "message": f"Supervisor API error: {resp.status}"
+                    }
+                    
+    except asyncio.TimeoutError:
+        _LOGGER.error("Update initiation timed out")
+        return {
+            "success": False,
+            "message": "Update initiation timed out"
+        }
+    except Exception as e:
+        _LOGGER.error(f"Update error: {e}", exc_info=True)
+        return {
+            "success": False,
+            "message": f"Update error: {str(e)}"
         }
 
 
