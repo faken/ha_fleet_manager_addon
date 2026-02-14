@@ -60,14 +60,33 @@ async def async_setup(hass: HomeAssistant, config: dict):
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up HA Fleet from a config entry."""
-    _LOGGER.info(f"Setting up HA Fleet integration: {entry.title}")
+    _LOGGER.info(f"🚀 Setting up HA Fleet integration: {entry.title}")
+    
+    cloud_url = entry.data["cloud_url"]
+    api_key = entry.data["api_key"]
+    instance_name = entry.data.get("instance_name", "My Home")
+    
+    # Test connection on setup
+    _LOGGER.info(f"🔍 Testing connection to Fleet backend at {cloud_url}")
+    import aiohttp
+    try:
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            headers = {"Authorization": f"Bearer {api_key}"}
+            async with session.get(f"{cloud_url}/health", headers=headers) as resp:
+                if resp.status == 200:
+                    _LOGGER.info(f"✅ Fleet backend connection successful!")
+                else:
+                    _LOGGER.warning(f"⚠️ Fleet backend returned status {resp.status}")
+    except Exception as e:
+        _LOGGER.warning(f"⚠️ Fleet backend connection test failed: {e} - Will retry on next heartbeat")
     
     # Store config
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
-        "cloud_url": entry.data["cloud_url"],
-        "api_key": entry.data["api_key"],
-        "instance_name": entry.data.get("instance_name", "My Home"),
+        "cloud_url": cloud_url,
+        "api_key": api_key,
+        "instance_name": instance_name,
     }
     
     # Initialize metrics collector
@@ -186,7 +205,7 @@ async def _poll_and_execute_commands(hass: HomeAssistant, entry: ConfigEntry):
                     _LOGGER.debug("No pending commands")
                     return
                 
-                _LOGGER.info(f"Found {len(commands)} pending command(s)")
+                _LOGGER.info(f"📋 Found {len(commands)} pending command(s)")
                 
                 # Execute each command
                 for cmd in commands:
@@ -194,10 +213,16 @@ async def _poll_and_execute_commands(hass: HomeAssistant, entry: ConfigEntry):
                     command_type = cmd.get("command_type")
                     params = cmd.get("params", {})
                     
-                    _LOGGER.info(f"Executing command {command_id}: {command_type}")
+                    _LOGGER.info(f"⚙️ Executing command #{command_id}: {command_type}")
                     
                     # Execute command
                     result = await _execute_command(hass, command_type, params)
+                    
+                    # Log result
+                    if result.get("success"):
+                        _LOGGER.info(f"✅ Command #{command_id} completed: {result.get('message', 'Success')}")
+                    else:
+                        _LOGGER.error(f"❌ Command #{command_id} failed: {result.get('message', 'Unknown error')}")
                     
                     # Report result back to cloud
                     await _report_command_result(
@@ -621,10 +646,10 @@ async def _report_command_result(
         
         async with session.post(url, json=payload, headers=headers) as resp:
             if resp.status == 200:
-                _LOGGER.info(f"✅ Command {command_id} result reported: {status}")
+                _LOGGER.info(f"📤 Command #{command_id} result reported to cloud: {status}")
             else:
                 error_text = await resp.text()
-                _LOGGER.error(f"Failed to report command result: {resp.status} - {error_text}")
+                _LOGGER.error(f"❌ Failed to report command #{command_id} result: {resp.status} - {error_text}")
                 
     except Exception as e:
         _LOGGER.error(f"Error reporting command result: {e}")
@@ -672,10 +697,24 @@ async def _send_metrics_to_cloud(hass: HomeAssistant, entry: ConfigEntry):
                 if response.status == 200:
                     data = await response.json()
                     health_score = data.get("health_score", "?")
-                    _LOGGER.info(f"✅ Metrics sent successfully (Health: {health_score})")
+                    instance_id = data.get("instance_id", "unknown")
+                    _LOGGER.info(
+                        f"✅ Metrics sent successfully! "
+                        f"Health Score: {health_score} | "
+                        f"Instance: {instance_id[:8]}... | "
+                        f"Entities: {payload['metrics'].get('total_entities', '?')} | "
+                        f"Version: {payload['metrics'].get('core_version', '?')}"
+                    )
+                elif response.status == 401:
+                    error_text = await response.text()
+                    _LOGGER.error(
+                        f"❌ Authentication failed! Invalid API token. "
+                        f"Please reconfigure the integration with a valid token. "
+                        f"Error: {error_text}"
+                    )
                 else:
                     error_text = await response.text()
-                    _LOGGER.error(f"Failed to send metrics: {response.status} - {error_text}")
+                    _LOGGER.error(f"❌ Failed to send metrics: {response.status} - {error_text}")
                     
     except asyncio.TimeoutError:
         _LOGGER.error("Timeout sending metrics to cloud")

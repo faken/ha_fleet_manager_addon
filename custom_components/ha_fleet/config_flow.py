@@ -29,32 +29,69 @@ async def validate_connection(
     hass: HomeAssistant, cloud_url: str, api_key: str
 ) -> dict[str, Any]:
     """Validate the connection to the HA Fleet backend."""
-    url = cloud_url.rstrip("/") + "/health"
-    
+    cloud_url = cloud_url.rstrip("/")
     session = async_get_clientsession(hass)
     
+    _LOGGER.info(f"🔍 Testing connection to HA Fleet backend at {cloud_url}")
+    
+    # Step 1: Check backend health
+    health_url = f"{cloud_url}/health"
     try:
         timeout = aiohttp.ClientTimeout(total=10)
-        async with session.get(url, timeout=timeout) as response:
+        async with session.get(health_url, timeout=timeout) as response:
             if response.status != 200:
+                _LOGGER.error(f"❌ Backend health check failed: HTTP {response.status}")
                 raise ValueError(f"Backend returned status {response.status}")
             
             data = await response.json()
             if data.get("status") != "healthy":
+                _LOGGER.error(f"❌ Backend is not healthy: {data}")
                 raise ValueError("Backend is not healthy")
             
-            _LOGGER.info(f"Successfully connected to HA Fleet backend at {cloud_url}")
-            return {"title": "HA Fleet Backend"}
+            _LOGGER.info(f"✅ Backend health check passed: {data}")
             
     except asyncio.TimeoutError:
-        _LOGGER.error(f"Timeout connecting to {cloud_url}")
-        raise ValueError("Connection timeout")
+        _LOGGER.error(f"❌ Timeout connecting to {cloud_url} (10s)")
+        raise ValueError("Connection timeout - backend not reachable")
     except aiohttp.ClientError as e:
-        _LOGGER.error(f"Connection error: {e}")
+        _LOGGER.error(f"❌ Connection error: {e}")
         raise ValueError(f"Cannot connect: {e}")
+    
+    # Step 2: Test API authentication
+    test_url = f"{cloud_url}/api/v1/instances"
+    try:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        async with session.get(test_url, headers=headers, timeout=timeout) as response:
+            if response.status == 401:
+                _LOGGER.error(f"❌ API token authentication failed: Invalid token")
+                raise ValueError("Invalid API token - authentication failed")
+            
+            if response.status != 200:
+                error_text = await response.text()
+                _LOGGER.error(f"❌ API test failed: HTTP {response.status} - {error_text}")
+                raise ValueError(f"API error: {response.status}")
+            
+            data = await response.json()
+            _LOGGER.info(f"✅ API authentication successful! Found {len(data.get('instances', []))} instance(s)")
+            
+    except asyncio.TimeoutError:
+        _LOGGER.error(f"❌ API request timeout")
+        raise ValueError("API timeout")
+    except aiohttp.ClientError as e:
+        _LOGGER.error(f"❌ API error: {e}")
+        raise ValueError(f"API error: {e}")
+    except ValueError:
+        raise  # Re-raise our own errors
     except Exception as e:
-        _LOGGER.error(f"Unexpected error: {e}")
+        _LOGGER.error(f"❌ Unexpected error during API test: {e}")
         raise ValueError(f"Unknown error: {e}")
+    
+    _LOGGER.info(f"🎉 All connection tests passed! Backend at {cloud_url} is ready.")
+    return {"title": "HA Fleet Backend"}
 
 
 class HAFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
