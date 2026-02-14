@@ -677,11 +677,20 @@ async def _send_metrics_to_cloud(hass: HomeAssistant, entry: ConfigEntry):
     
     # Prepare payload
     from datetime import datetime, timezone
+    
+    # Extract unavailable entity details if present (special handling)
+    unavailable_details = metrics.pop("_unavailable_entity_details", None)
+    
     payload = {
         "instance_id": instance_id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "metrics": metrics
     }
+    
+    # Add unavailable entity details as separate top-level field (if present)
+    if unavailable_details:
+        payload["unavailable_entity_details"] = unavailable_details
+        _LOGGER.debug(f"Including {len(unavailable_details)} unavailable entity details in payload")
     
     # Send to cloud
     cloud_url = config["cloud_url"].rstrip("/")

@@ -149,7 +149,7 @@ class MetricsCollector:
         return metrics
     
     def _collect_entities(self) -> Dict[str, Any]:
-        """Collect entity statistics."""
+        """Collect entity statistics and unavailable entity details."""
         states = self.hass.states.async_all()
         
         total = len(states)
@@ -162,8 +162,50 @@ class MetricsCollector:
                 f"HA might still be loading integrations"
             )
         
-        unavailable = len([s for s in states if s.state in ("unavailable", "unknown")])
+        unavailable_states = [s for s in states if s.state in ("unavailable", "unknown")]
+        unavailable = len(unavailable_states)
         unavailable_percent = (unavailable / total * 100) if total > 0 else 0
+        
+        # Collect detailed information about unavailable entities
+        unavailable_details = []
+        for state in unavailable_states:
+            # Get integration/platform from attributes or entity registry
+            platform = "unknown"
+            if hasattr(state, 'attributes'):
+                # Try to get from attributes
+                if 'integration' in state.attributes:
+                    platform = state.attributes['integration']
+                elif 'platform' in state.attributes:
+                    platform = state.attributes['platform']
+            
+            # Get friendly name
+            friendly_name = state.attributes.get('friendly_name', state.entity_id) if hasattr(state, 'attributes') else state.entity_id
+            
+            # Calculate how long entity has been unavailable
+            duration_seconds = 0
+            if state.last_changed:
+                try:
+                    now = datetime.now(timezone.utc)
+                    # Ensure last_changed is timezone-aware
+                    if state.last_changed.tzinfo is None:
+                        last_changed = state.last_changed.replace(tzinfo=timezone.utc)
+                    else:
+                        last_changed = state.last_changed
+                    
+                    duration = now - last_changed
+                    duration_seconds = int(duration.total_seconds())
+                except Exception as e:
+                    _LOGGER.debug(f"Failed to calculate duration for {state.entity_id}: {e}")
+            
+            unavailable_details.append({
+                "entity_id": state.entity_id,
+                "friendly_name": friendly_name,
+                "domain": state.domain,
+                "platform": platform,
+                "state": state.state,
+                "last_changed": state.last_changed.isoformat() if state.last_changed else None,
+                "duration_seconds": duration_seconds
+            })
         
         # Count by domain
         automations = len([s for s in states if s.domain == "automation"])
@@ -174,13 +216,20 @@ class MetricsCollector:
             if hasattr(state, 'attributes') and 'integration' in state.attributes:
                 integrations.add(state.attributes['integration'])
         
-        return {
+        metrics = {
             "total_entities": total,
             "unavailable_entities": unavailable,
             "unavailable_entities_percent": round(unavailable_percent, 2),
             "automation_count": automations,
             "integration_count": len(integrations),
         }
+        
+        # Store unavailable_details separately (will be added to payload root by __init__.py)
+        if unavailable_details:
+            metrics["_unavailable_entity_details"] = unavailable_details
+            _LOGGER.info(f"Collected {len(unavailable_details)} unavailable entity details")
+        
+        return metrics
     
     async def _collect_security(self) -> Dict[str, Any]:
         """Collect security metrics (SSL certificate info)."""
