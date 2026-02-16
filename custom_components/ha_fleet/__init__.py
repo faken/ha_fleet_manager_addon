@@ -214,21 +214,30 @@ async def _poll_and_execute_commands(hass: HomeAssistant, entry: ConfigEntry):
                     params = cmd.get("params", {})
                     
                     _LOGGER.info(f"⚙️ Executing command #{command_id}: {command_type}")
-                    
-                    # Execute command
-                    result = await _execute_command(hass, command_type, params)
-                    
+
+                    # Execute command (pass cloud config for commands that need it)
+                    result = await _execute_command(
+                        hass, command_type, params,
+                        command_id=command_id,
+                        cloud_url=cloud_url,
+                        api_key=api_key,
+                        instance_id=instance_id
+                    )
+
                     # Log result
                     if result.get("success"):
                         _LOGGER.info(f"✅ Command #{command_id} completed: {result.get('message', 'Success')}")
                     else:
                         _LOGGER.error(f"❌ Command #{command_id} failed: {result.get('message', 'Unknown error')}")
-                    
+
                     # Report result back to cloud
-                    await _report_command_result(
-                        session, cloud_url, api_key, instance_id,
-                        command_id, result
-                    )
+                    # For download_backup: the cloud upload endpoint updates the command
+                    # on success, but we still need to report failures
+                    if command_type != "download_backup" or not result.get("success"):
+                        await _report_command_result(
+                            session, cloud_url, api_key, instance_id,
+                            command_id, result
+                        )
                     
     except asyncio.TimeoutError:
         _LOGGER.warning("Timeout polling for commands")
@@ -238,23 +247,41 @@ async def _poll_and_execute_commands(hass: HomeAssistant, entry: ConfigEntry):
         _LOGGER.error(f"Unexpected error polling commands: {e}", exc_info=True)
 
 
-async def _execute_command(hass: HomeAssistant, command_type: str, params: dict) -> dict:
+async def _execute_command(
+    hass: HomeAssistant,
+    command_type: str,
+    params: dict,
+    command_id: int = None,
+    cloud_url: str = None,
+    api_key: str = None,
+    instance_id: str = None
+) -> dict:
     """Execute a command locally and return result."""
     import os
-    
+
     try:
         if command_type == "trigger_backup":
             # Execute backup via Supervisor API
             return await _execute_backup(hass, params)
-        
+
         elif command_type == "get_backup_info":
             # Get info about a specific backup
             return await _get_backup_info(hass, params)
-        
+
+        elif command_type == "download_backup":
+            # Download backup from Supervisor and upload to Cloud
+            return await _execute_download_backup(
+                hass, params,
+                command_id=command_id,
+                cloud_url=cloud_url,
+                api_key=api_key,
+                instance_id=instance_id
+            )
+
         elif command_type == "get_logs":
             # Get Home Assistant logs
             return await _get_logs(hass, params)
-        
+
         elif command_type == "restart_homeassistant":
             # Restart HA Core
             await hass.services.async_call("homeassistant", "restart")
@@ -262,22 +289,22 @@ async def _execute_command(hass: HomeAssistant, command_type: str, params: dict)
                 "success": True,
                 "message": "Home Assistant restarting..."
             }
-        
+
         elif command_type == "list_automations":
             # List all automations
             return await _list_automations(hass, params)
-        
+
         elif command_type == "update_core":
             # Update HA Core
             return await _execute_update(hass, params)
-        
+
         else:
             _LOGGER.warning(f"Unknown command type: {command_type}")
             return {
                 "success": False,
                 "message": f"Unknown command type: {command_type}"
             }
-            
+
     except Exception as e:
         _LOGGER.error(f"Command execution failed: {e}", exc_info=True)
         return {
@@ -406,6 +433,101 @@ async def _get_backup_info(hass: HomeAssistant, params: dict) -> dict:
         return {
             "success": False,
             "message": f"Error: {str(e)}"
+        }
+
+
+async def _execute_download_backup(
+    hass: HomeAssistant,
+    params: dict,
+    command_id: int = None,
+    cloud_url: str = None,
+    api_key: str = None,
+    instance_id: str = None
+) -> dict:
+    """Download backup from Supervisor and stream-upload to Cloud."""
+    import os
+
+    slug = params.get("slug")
+    if not slug:
+        return {"success": False, "message": "Missing backup slug"}
+
+    if not command_id or not cloud_url or not api_key or not instance_id:
+        return {"success": False, "message": "Missing cloud connection config for backup download"}
+
+    supervisor_token = os.getenv("SUPERVISOR_TOKEN")
+    if not supervisor_token:
+        return {
+            "success": False,
+            "message": "Supervisor not available (not running on HA OS/Supervised)"
+        }
+
+    supervisor_url = f"http://supervisor/backups/{slug}/download"
+    cloud_upload_url = f"{cloud_url}/api/v1/backups/upload/{command_id}?instance_id={instance_id}"
+
+    _LOGGER.info(f"Starting backup download: slug={slug}, command_id={command_id}")
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=1800)  # 30 min for large backups
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            # Download from Supervisor
+            supervisor_headers = {
+                "Authorization": f"Bearer {supervisor_token}",
+            }
+
+            async with session.get(supervisor_url, headers=supervisor_headers) as supervisor_resp:
+                if supervisor_resp.status != 200:
+                    error_text = await supervisor_resp.text()
+                    return {
+                        "success": False,
+                        "message": f"Supervisor download failed: {supervisor_resp.status} - {error_text[:200]}"
+                    }
+
+                # Stream from Supervisor to Cloud upload
+                async def stream_from_supervisor():
+                    async for chunk in supervisor_resp.content.iter_chunked(8192):
+                        yield chunk
+
+                upload_headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/octet-stream",
+                }
+
+                async with session.post(
+                    cloud_upload_url,
+                    data=stream_from_supervisor(),
+                    headers=upload_headers,
+                ) as upload_resp:
+                    if upload_resp.status == 200:
+                        result = await upload_resp.json()
+                        _LOGGER.info(
+                            f"✅ Backup uploaded to cloud: "
+                            f"token={result.get('download_token', '?')}, "
+                            f"size={result.get('file_size', '?')}"
+                        )
+                        return {
+                            "success": True,
+                            "message": "Backup uploaded to cloud successfully",
+                            "download_token": result.get("download_token"),
+                            "file_size": result.get("file_size")
+                        }
+                    else:
+                        error_text = await upload_resp.text()
+                        return {
+                            "success": False,
+                            "message": f"Cloud upload failed: {upload_resp.status} - {error_text[:200]}"
+                        }
+
+    except asyncio.TimeoutError:
+        _LOGGER.error("Backup download/upload timed out")
+        return {
+            "success": False,
+            "message": "Backup download/upload timed out after 30 minutes"
+        }
+    except Exception as e:
+        _LOGGER.error(f"Backup download/upload failed: {e}", exc_info=True)
+        return {
+            "success": False,
+            "message": f"Download/upload error: {str(e)}"
         }
 
 
